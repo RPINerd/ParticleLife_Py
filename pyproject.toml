@@ -1,0 +1,12 @@
+[project]
+name = "particlelife-py"
+version = "0.1.0"
+description = "Simple particle simulation based on attraction and repulsion, built with pygame-ce."
+authors = [
+    {name = "RPINerd"},
+]
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "pygame-ce>=2.5.3",
+]
