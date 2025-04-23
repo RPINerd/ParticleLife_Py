@@ -1,99 +1,79 @@
 """
-A simple Python port of particle_life
+Particle Life Simulation | RPINerd, 04/2025
 
-pygame is required:
-    pip install pygame-ce
-
-Note the code here is not efficient, but made to be educational and easy to work with.
+A python implementation of the Particle Life simulation made by Hunar4321. With a focus on feature pairity
+with the original JS/CPP version, while having minimal compromise on performance.
 """
-import random
+
+import argparse
+import logging
 import sys
 
-import pygame
-from pygame.locals import K_ESCAPE, KEYDOWN, QUIT
-
-WINDOW_RES: tuple[int, int] = (1200, 800)
-atoms = []
-pygame.init()
-window = pygame.display.set_mode(WINDOW_RES)
+from particlelife.simulation import Simulation
 
 
-def draw(surface, x, y, color, size):
-    for i in range(0, size):
-        pygame.draw.line(surface, color, (x, y - 1), (x, y + 2), abs(size))
+def parse_args() -> argparse.Namespace:
+    """
+    Parse command line arguments.
+
+    Returns:
+        argparse.Namespace: Parsed arguments
+    """
+    parser = argparse.ArgumentParser(description="Particle Life Simulation")
+    parser.add_argument(
+        "--seed", type=int, default=91651088029, help="Random seed for simulation"
+    )
+    parser.add_argument(
+        "--width", type=int, default=800, help="Width of the simulation window"
+    )
+    parser.add_argument(
+        "--height", type=int, default=600, help="Height of the simulation window"
+    )
+    parser.add_argument(
+        "--fullscreen", action="store_true", help="Run in fullscreen mode"
+    )
+    parser.add_argument(
+        "--colors", type=int, default=4, help="Number of particle colors", choices=range(1, 8)
+    )
+    parser.add_argument(
+        "--atoms-per-color", type=int, default=500, help="Number of atoms per color"
+    )
+    parser.add_argument(
+        "--debug", action="store_true", help="Enable debug logging"
+    )
+    return parser.parse_args()
 
 
-def atom(x, y, c):
-    return {"x": x, "y": y, "vx": 0, "vy": 0, "color": c}
+def setup_logging(debug: bool = False) -> None:
+    """
+    Set up logging configuration.
+
+    Args:
+        debug (bool): Whether to enable debug logging
+    """
+    log_level = logging.DEBUG if debug else logging.INFO
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
 
 
-def randomx():
-    return round(random.random() * WINDOW_RES[0] + 1)
+def main() -> None:
+    """Main entry point for the application."""
+    args = parse_args()
+    setup_logging(args.debug)
+
+    sim = Simulation(
+        seed=args.seed,
+        width=args.width,
+        height=args.height,
+        fullscreen=args.fullscreen,
+        num_colors=args.colors,
+        atoms_per_color=args.atoms_per_color,
+    )
+
+    sys.exit(sim.run())
 
 
-def randomy():
-    return round(random.random() * WINDOW_RES[1] + 1)
-
-
-def create(number, color):
-    group = []
-    for i in range(number):
-        group.append(atom(randomx(), randomy(), color))
-        atoms.append(group[i])
-    return group
-
-
-def rule(atoms1, atoms2, g):
-    for i in range(len(atoms1)):
-        fx = 0
-        fy = 0
-        for j in range(len(atoms2)):
-            a = atoms1[i]
-            b = atoms2[j]
-            dx = a["x"] - b["x"]
-            dy = a["y"] - b["y"]
-            d = (dx * dx + dy * dy)**0.5
-            if (d > 0 and d < 80):
-                F = g / d
-                fx += F * dx
-                fy += F * dy
-        a["vx"] = (a["vx"] + fx) * 0.5
-        a["vy"] = (a["vy"] + fy) * 0.5
-        a["x"] += a["vx"]
-        a["y"] += a["vy"]
-        if (a["x"] <= 0 or a["x"] >= WINDOW_RES[0]):
-            a["vx"] *= -1
-        if (a["y"] <= 0 or a["y"] >= WINDOW_RES[1]):
-            a["vy"] *= -1
-
-
-yellow = create(100, "yellow")
-red = create(100, "red")
-green = create(100, "green")
-cyan = create(100, "cyan")
-
-run = True
-while run:
-    window.fill(0)
-    rule(red, red, 0.1)
-    rule(red, yellow, -0.15)
-    rule(red, green, 0.1)
-    rule(red, cyan, -0.1)
-    rule(yellow, yellow, -0.1)
-    rule(yellow, green, 0.1)
-    rule(yellow, cyan, -0.1)
-    rule(green, green, 0.1)
-    rule(green, cyan, -0.1)
-    rule(cyan, cyan, 0.1)
-    for i in range(len(atoms)):
-        draw(window, atoms[i]["x"], atoms[i]["y"], atoms[i]["color"], 3)
-
-    for event in pygame.event.get():
-        if event.type == KEYDOWN and event.key == K_ESCAPE:
-            run = False
-        if event.type == QUIT:
-            run = False
-    pygame.display.flip()
-
-pygame.quit()
-sys.exit()
+if __name__ == "__main__":
+    main()
