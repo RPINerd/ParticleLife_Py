@@ -27,6 +27,9 @@ class Simulation:
         fullscreen: bool = False,
         num_colors: int = 4,
         atoms_per_color: int = 500,
+        use_gpu: bool = False,
+        platform_index: int = 0,
+        device_index: int = 0,
     ) -> None:
         """
         Initialize the simulation.
@@ -38,6 +41,9 @@ class Simulation:
             fullscreen (bool): Whether to run in fullscreen mode
             num_colors (int): Number of different colored particles
             atoms_per_color (int): Number of atoms of each color
+            use_gpu (bool): Whether to use GPU acceleration
+            platform_index (int): OpenCL platform index to use
+            device_index (int): OpenCL device index to use
         """
         pygame.init()
         self.settings = Settings(
@@ -46,6 +52,7 @@ class Simulation:
             height=height,
             num_colors=num_colors,
             atoms_per_color=atoms_per_color,
+            use_gpu=use_gpu,
         )
 
         # Setup display
@@ -80,6 +87,12 @@ class Simulation:
         # Initialize random rules and atoms
         self.random_rules()
         self.reset_atoms()
+
+        # Log the simulation mode
+        if self.settings.use_gpu and self.settings.opencl_initialized:
+            logger.info("Using GPU acceleration")
+        else:
+            logger.info("Using CPU for simulation")
 
         logger.info(f"Simulation initialized with seed: {self.settings.seed}")
 
@@ -139,7 +152,15 @@ class Simulation:
             self.settings.height = height
 
         # Apply physics rules
+        start_time = time.time()
         self.total_v = self.atoms.apply_rules(self.pulse, self.pulse_x, self.pulse_y)
+        elapsed = time.time() - start_time
+
+        # Log performance occasionally
+        if time.time() - self.last_time > 5.0:  # Every 5 seconds
+            self.last_time = time.time()
+            atoms_count = len(self.atoms.atoms)
+            logger.info(f"Physics update for {atoms_count} atoms took {elapsed * 1000:.2f}ms")
 
         # Update pulse
         if self.pulse != 0:
@@ -195,10 +216,28 @@ class Simulation:
             self.reset_atoms()
         elif event.key == pygame.K_s:
             self.symmetric_rules()
+        elif event.key == pygame.K_g and pygame.key.get_mods() & pygame.KMOD_CTRL:
+            # Toggle GPU acceleration
+            self.toggle_gpu()
         # elif event.key == pygame.K_f:
         #     self._take_screenshot()
         # elif event.key == pygame.K_v:
         #     self._toggle_recording()
+
+    def toggle_gpu(self) -> None:
+        """Toggle between GPU and CPU computation."""
+        if self.settings.use_gpu:
+            self.settings.use_gpu = False
+            logger.info("Switched to CPU computation")
+        else:
+            self.settings.use_gpu = True
+            # Reinitialize OpenCL if we're switching back to GPU mode
+            self.atoms._initialize_opencl()
+            if self.settings.opencl_initialized:
+                self.atoms._create_opencl_buffers()
+                logger.info("Switched to GPU computation")
+            else:
+                logger.warning("Failed to initialize GPU, staying on CPU")
 
     def _handle_mouse_event(self, event: pygame.event.Event) -> None:
         """
@@ -207,12 +246,11 @@ class Simulation:
         Args:
             event (pygame.event.Event): Mouse event
         """
-        # if event.button == 1:  # Left click
-        #     self.pulse = self.settings.pulse_duration
-        #     if pygame.key.get_mods() & pygame.KMOD_SHIFT:
-        #         self.pulse = -self.pulse
-        #     self.pulse_x, self.pulse_y = event.pos
-        pass
+        if event.button == 1:  # Left click
+            self.pulse = self.settings.pulse_duration
+            if pygame.key.get_mods() & pygame.KMOD_SHIFT:
+                self.pulse = -self.pulse
+            self.pulse_x, self.pulse_y = event.pos
 
     def random_rules(self) -> None:
         """Generate random rules between particle colors."""

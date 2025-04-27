@@ -9,6 +9,9 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import pygame
+import pyopencl as cl
+
+from .opencl_utils import PARTICLE_KERNEL, CLProgram, check_opencl_available, get_opencl_context
 
 if TYPE_CHECKING:
     from particlelife.settings import Settings
@@ -31,6 +34,48 @@ class Atoms:
         self.atoms = np.zeros((0, 5))  # [x, y, vx, vy, color_idx]
         self.prev_atom_count = 0
 
+        # Initialize OpenCL if requested
+        if self.settings.use_gpu:
+            self._initialize_opencl()
+
+    def _initialize_opencl(self) -> None:
+        """Initialize OpenCL context, queue, and kernels."""
+        # First check if OpenCL is available
+        available, error_msg = check_opencl_available()
+        if not available:
+            logger.error(f"OpenCL initialization failed: {error_msg}")
+            logger.error("Falling back to CPU computation")
+            logger.error("To use GPU acceleration, install appropriate OpenCL drivers for your hardware:")
+            logger.error("- For NVIDIA GPUs: Install NVIDIA drivers and CUDA toolkit")
+            logger.error("- For AMD GPUs: Install AMD drivers with OpenCL support")
+            logger.error("- For Intel GPUs: Install Intel OpenCL runtime")
+            self.settings.use_gpu = False
+            return
+
+        try:
+            # Get the OpenCL context, device, and queue
+            context, device, queue = get_opencl_context(
+                platform_index=getattr(self.settings, 'platform_index', 0),
+                device_index=getattr(self.settings, 'device_index', 0)
+            )
+
+            # Store in settings for potential reuse
+            self.settings.opencl_context = context
+            self.settings.opencl_device = device
+            self.settings.opencl_queue = queue
+
+            # Create program with the particle simulation kernel
+            program = CLProgram(context, PARTICLE_KERNEL)
+            self.settings.opencl_program = program
+            self.settings.opencl_kernel = program.get_kernel("apply_forces")
+
+            self.settings.opencl_initialized = True
+            logger.info("OpenCL initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize OpenCL: {e}")
+            logger.error("Falling back to CPU computation")
+            self.settings.use_gpu = False
+
     def reset(self) -> None:
         """Reset atoms to random positions with zero velocity."""
         count = self.settings.atoms_settings["count"]
@@ -41,7 +86,6 @@ class Atoms:
         self.atoms = np.zeros((total_atoms, 5))
 
         # Generate random positions
-
         rng = np.random.default_rng()
 
         # Apply random positions
@@ -57,6 +101,52 @@ class Atoms:
             self.atoms[start_idx:end_idx, 4] = i
 
         self.prev_atom_count = count
+
+        # Reinitialize OpenCL buffers if using GPU
+        if self.settings.use_gpu and self.settings.opencl_initialized:
+            self._create_opencl_buffers()
+
+    def _create_opencl_buffers(self) -> None:
+        """Create and populate OpenCL buffers for particle simulation."""
+        if not self.settings.opencl_initialized:
+            return
+
+        context = self.settings.opencl_context
+        queue = self.settings.opencl_queue
+
+        # Extract positions, velocities, and colors from the atoms array
+        positions_velocities = np.zeros((len(self.atoms), 4), dtype=np.float32)
+        positions_velocities[:, 0] = self.atoms[:, 0]  # x
+        positions_velocities[:, 1] = self.atoms[:, 1]  # y
+        positions_velocities[:, 2] = self.atoms[:, 2]  # vx
+        positions_velocities[:, 3] = self.atoms[:, 3]  # vy
+
+        colors = np.array(self.atoms[:, 4], dtype=np.int32)
+
+        # Convert rules and radii to NumPy arrays
+        rules_array = np.array(self.settings.rules_array, dtype=np.float32)
+        radii2_array = np.array(self.settings.radii2_array, dtype=np.float32)
+
+        # Create output array for total velocities
+        total_velocities = np.zeros(len(self.atoms), dtype=np.float32)
+
+        # Create OpenCL buffers
+        mf = cl.mem_flags
+        self.settings.cl_positions_velocities = cl.Buffer(
+            context, mf.READ_WRITE | mf.COPY_HOST_PTR, hostbuf=positions_velocities
+        )
+        self.settings.cl_colors = cl.Buffer(
+            context, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=colors
+        )
+        self.settings.cl_rules_array = cl.Buffer(
+            context, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=rules_array
+        )
+        self.settings.cl_radii2_array = cl.Buffer(
+            context, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=radii2_array
+        )
+        self.settings.cl_total_velocities = cl.Buffer(
+            context, mf.WRITE_ONLY | mf.COPY_HOST_PTR, hostbuf=total_velocities
+        )
 
     def update_count_if_needed(self) -> None:
         """
@@ -84,6 +174,99 @@ class Atoms:
         if len(self.atoms) == 0:
             return 0.0
 
+        # Use GPU version if enabled
+        if self.settings.use_gpu and self.settings.opencl_initialized:
+            return self._apply_rules_gpu(pulse, pulse_x, pulse_y)
+        return self._apply_rules_cpu(pulse, pulse_x, pulse_y)
+
+    def _apply_rules_gpu(self, pulse: int, pulse_x: float, pulse_y: float) -> float:
+        """
+        Apply the interaction rules between atoms using GPU acceleration.
+
+        Args:
+            pulse (int): Current pulse strength
+            pulse_x (float): X coordinate of the pulse center
+            pulse_y (float): Y coordinate of the pulse center
+
+        Returns:
+            float: Total velocity (measure of activity)
+        """
+        queue = self.settings.opencl_queue
+        kernel = self.settings.opencl_kernel
+
+        # For performance, extract settings values used in calculations
+        width = np.float32(self.settings.width)
+        height = np.float32(self.settings.height)
+        time_scale = np.float32(self.settings.time_scale)
+        viscosity = np.float32(self.settings.viscosity)
+        wall_repel = np.float32(self.settings.wall_repel)
+        gravity = np.float32(self.settings.gravity)
+        num_atoms = np.int32(len(self.atoms))
+        num_colors = np.int32(self.settings.num_colors)
+
+        # Check if rules have changed, and update buffer if needed
+        rules_array = np.array(self.settings.rules_array, dtype=np.float32)
+        cl.enqueue_copy(queue, self.settings.cl_rules_array, rules_array)
+
+        # Check if radii have changed, and update buffer if needed
+        radii2_array = np.array(self.settings.radii2_array, dtype=np.float32)
+        cl.enqueue_copy(queue, self.settings.cl_radii2_array, radii2_array)
+
+        # Run the kernel
+        global_size = (len(self.atoms),)
+        local_size = None  # Let OpenCL choose the local size
+
+        kernel(
+            queue, global_size, local_size,
+            self.settings.cl_positions_velocities,
+            self.settings.cl_colors,
+            self.settings.cl_rules_array,
+            self.settings.cl_radii2_array,
+            num_atoms,
+            num_colors,
+            width,
+            height,
+            time_scale,
+            viscosity,
+            wall_repel,
+            gravity,
+            np.int32(pulse),
+            np.float32(pulse_x),
+            np.float32(pulse_y),
+            self.settings.cl_total_velocities
+        )
+
+        # Read back the positions and velocities
+        positions_velocities = np.empty((len(self.atoms), 4), dtype=np.float32)
+        cl.enqueue_copy(queue, positions_velocities, self.settings.cl_positions_velocities)
+
+        # Read back total velocities
+        total_velocities = np.empty(len(self.atoms), dtype=np.float32)
+        cl.enqueue_copy(queue, total_velocities, self.settings.cl_total_velocities)
+
+        # Update the atoms array
+        self.atoms[:, 0] = positions_velocities[:, 0]  # x
+        self.atoms[:, 1] = positions_velocities[:, 1]  # y
+        self.atoms[:, 2] = positions_velocities[:, 2]  # vx
+        self.atoms[:, 3] = positions_velocities[:, 3]  # vy
+
+        # Calculate total velocity
+        total_v = np.sum(total_velocities) / len(self.atoms)
+
+        return total_v
+
+    def _apply_rules_cpu(self, pulse: int, pulse_x: float, pulse_y: float) -> float:
+        """
+        Apply the interaction rules between atoms using CPU.
+
+        Args:
+            pulse (int): Current pulse strength
+            pulse_x (float): X coordinate of the pulse center
+            pulse_y (float): Y coordinate of the pulse center
+
+        Returns:
+            float: Total velocity (measure of activity)
+        """
         # For performance, extract settings values used in calculations
         width = self.settings.width
         height = self.settings.height
@@ -131,11 +314,7 @@ class Atoms:
 
                 # Draw lines between interacting atoms if enabled
                 if self.settings.drawings["lines"]:
-                    for j, is_interacting in enumerate(mask):
-                        if is_interacting:
-                            color = self.settings.get_color_rgb(colors[j])
-                            # We will collect these to draw in the draw method
-                            # (would store these if needed for drawing)
+                    pass  # Would store these if needed for drawing
 
             # Apply pulse if active
             if pulse != 0:

@@ -9,6 +9,7 @@ import argparse
 import logging
 import sys
 
+from particlelife.opencl_utils import check_opencl_available, list_devices
 from particlelife.simulation import Simulation
 
 
@@ -41,6 +42,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--debug", action="store_true", help="Enable debug logging"
     )
+    # OpenCL arguments
+    parser.add_argument(
+        "--use-gpu", action="store_true", help="Use GPU acceleration via OpenCL"
+    )
+    parser.add_argument(
+        "--platform-index", type=int, default=0,
+        help="OpenCL platform index to use (default: 0)"
+    )
+    parser.add_argument(
+        "--device-index", type=int, default=0,
+        help="OpenCL device index to use (default: 0)"
+    )
+    parser.add_argument(
+        "--list-devices", action="store_true",
+        help="List available OpenCL platforms and devices and exit"
+    )
     return parser.parse_args()
 
 
@@ -63,6 +80,23 @@ def main() -> None:
     args = parse_args()
     setup_logging(args.debug)
 
+    # List devices if requested
+    if args.list_devices:
+        list_devices()
+        return
+
+    # Check OpenCL availability if GPU mode requested
+    if args.use_gpu:
+        available, error_msg = check_opencl_available()
+        if not available:
+            logging.error(f"OpenCL not available: {error_msg}")
+            logging.error("Falling back to CPU mode")
+            logging.error("To use GPU acceleration, install appropriate OpenCL drivers for your hardware:")
+            logging.error("- For NVIDIA GPUs: Install NVIDIA drivers and CUDA toolkit")
+            logging.error("- For AMD GPUs: Install AMD drivers with OpenCL support")
+            logging.error("- For Intel GPUs: Install Intel OpenCL runtime")
+            args.use_gpu = False
+
     sim = Simulation(
         seed=args.seed,
         width=args.width,
@@ -70,6 +104,9 @@ def main() -> None:
         fullscreen=args.fullscreen,
         num_colors=args.colors,
         atoms_per_color=args.atoms_per_color,
+        use_gpu=args.use_gpu,
+        platform_index=args.platform_index,
+        device_index=args.device_index,
     )
 
     sys.exit(sim.run())
