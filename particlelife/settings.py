@@ -12,7 +12,6 @@ class Settings:
         height: int = 600,
         num_colors: int = 4,
         atoms_per_color: int = 500,
-        use_gpu: bool = False,
     ) -> None:
         """
         Initialize simulation settings.
@@ -23,7 +22,6 @@ class Settings:
             height (int): Height of the simulation window
             num_colors (int): Number of different colored particles
             atoms_per_color (int): Number of atoms of each color
-            use_gpu (bool): Whether to use GPU acceleration
         """
         # Display settings
         self.width = width
@@ -54,22 +52,6 @@ class Settings:
         self.wall_repel = 40
         self.explore = False
         self.explore_period = 100
-
-        # GPU acceleration settings
-        self.use_gpu = use_gpu
-        self.opencl_initialized = False
-        self.opencl_context = None
-        self.opencl_queue = None
-        self.opencl_program = None
-        self.opencl_kernel = None
-        self.opencl_device = None
-
-        # Buffers for OpenCL
-        self.cl_positions_velocities = None
-        self.cl_colors = None
-        self.cl_rules_array = None
-        self.cl_radii2_array = None
-        self.cl_total_velocities = None
 
         # Colors list - populated based on num_colors
         self.colors = self._get_colors()

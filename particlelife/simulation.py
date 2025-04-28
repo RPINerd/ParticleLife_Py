@@ -27,9 +27,6 @@ class Simulation:
         fullscreen: bool = False,
         num_colors: int = 4,
         atoms_per_color: int = 500,
-        use_gpu: bool = False,
-        platform_index: int = 0,
-        device_index: int = 0,
     ) -> None:
         """
         Initialize the simulation.
@@ -41,9 +38,6 @@ class Simulation:
             fullscreen (bool): Whether to run in fullscreen mode
             num_colors (int): Number of different colored particles
             atoms_per_color (int): Number of atoms of each color
-            use_gpu (bool): Whether to use GPU acceleration
-            platform_index (int): OpenCL platform index to use
-            device_index (int): OpenCL device index to use
         """
         pygame.init()
         self.settings = Settings(
@@ -52,7 +46,6 @@ class Simulation:
             height=height,
             num_colors=num_colors,
             atoms_per_color=atoms_per_color,
-            use_gpu=use_gpu,
         )
 
         # Setup display
@@ -87,12 +80,6 @@ class Simulation:
         # Initialize random rules and atoms
         self.random_rules()
         self.reset_atoms()
-
-        # Log the simulation mode
-        if self.settings.use_gpu and self.settings.opencl_initialized:
-            logger.info("Using GPU acceleration")
-        else:
-            logger.info("Using CPU for simulation")
 
         logger.info(f"Simulation initialized with seed: {self.settings.seed}")
 
@@ -216,28 +203,10 @@ class Simulation:
             self.reset_atoms()
         elif event.key == pygame.K_s:
             self.symmetric_rules()
-        elif event.key == pygame.K_g and pygame.key.get_mods() & pygame.KMOD_CTRL:
-            # Toggle GPU acceleration
-            self.toggle_gpu()
         # elif event.key == pygame.K_f:
         #     self._take_screenshot()
         # elif event.key == pygame.K_v:
         #     self._toggle_recording()
-
-    def toggle_gpu(self) -> None:
-        """Toggle between GPU and CPU computation."""
-        if self.settings.use_gpu:
-            self.settings.use_gpu = False
-            logger.info("Switched to CPU computation")
-        else:
-            self.settings.use_gpu = True
-            # Reinitialize OpenCL if we're switching back to GPU mode
-            self.atoms._initialize_opencl()
-            if self.settings.opencl_initialized:
-                self.atoms._create_opencl_buffers()
-                logger.info("Switched to GPU computation")
-            else:
-                logger.warning("Failed to initialize GPU, staying on CPU")
 
     def _handle_mouse_event(self, event: pygame.event.Event) -> None:
         """
