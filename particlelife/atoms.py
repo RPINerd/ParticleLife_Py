@@ -83,38 +83,22 @@ class Atoms:
         if len(self.atoms) == 0:
             return 0.0
 
-        return self._apply_rules_cpu(pulse, pulse_x, pulse_y)
-
-    def _apply_rules_cpu(self, pulse: int, pulse_x: float, pulse_y: float) -> float:
-        """
-        Apply the interaction rules between atoms using CPU.
-
-        Args:
-            pulse (int): Current pulse strength
-            pulse_x (float): X coordinate of the pulse center
-            pulse_y (float): Y coordinate of the pulse center
-
-        Returns:
-            float: Total velocity (measure of activity)
-        """
-        # For performance, extract settings values used in calculations
-        width = self.settings.width
-        height = self.settings.height
-        time_scale = self.settings.time_scale
-        viscosity = self.settings.viscosity
-        wall_repel = self.settings.wall_repel
-        gravity = self.settings.gravity
-
         # Calculate forces efficiently using vectorized operations
-        total_atoms = len(self.atoms)
-        forces = np.zeros((total_atoms, 2))  # [fx, fy]
+        forces: np.array[tuple[int, int], np.float64] = np.zeros((len(self.atoms), 2))  # [fx, fy]
 
         # Create a view of just the positions and colors for cleaner code
-        positions = self.atoms[:, 0:2]
-        colors = self.atoms[:, 4].astype(np.int32)
+        positions: np.array = self.atoms[:, 0:2]
+        colors: np.array[np.int32] = self.atoms[:, 4].astype(np.int32)
 
-        # Calculate pairwise distances and forces
-        for i in range(total_atoms):
+        forces = self._calc_forces(colors, positions, forces, pulse, pulse_x, pulse_y)
+
+        total_velocity = self._update_forces(forces)
+
+        return total_velocity
+
+    def _calc_forces(self, colors: np.array, positions: np.array, forces: np.array, pulse: int, pulse_x: float, pulse_y: float) -> np.array:
+        """Calculate pairwise distances and forces"""
+        for i in range(len(self.atoms)):
             # Get the rules index based on color
             idx = int(colors[i]) * self.settings.num_colors
             color_radius2 = self.settings.radii2_array[int(colors[i])]
@@ -152,32 +136,46 @@ class Atoms:
                 dy = self.atoms[i, 1] - pulse_y
                 d2 = dx * dx + dy * dy
                 if d2 > 0:
-                    pulse_force = 100.0 * pulse / (d2 * time_scale)
+                    pulse_force = 100.0 * pulse / (d2 * self.settings.time_scale)
                     forces[i, 0] += pulse_force * dx
                     forces[i, 1] += pulse_force * dy
 
             # Apply wall repulsion if enabled
-            if wall_repel > 0:
-                if self.atoms[i, 0] < wall_repel:
-                    forces[i, 0] += (wall_repel - self.atoms[i, 0]) * 0.1
-                if self.atoms[i, 0] > width - wall_repel:
-                    forces[i, 0] += (width - wall_repel - self.atoms[i, 0]) * 0.1
-                if self.atoms[i, 1] < wall_repel:
-                    forces[i, 1] += (wall_repel - self.atoms[i, 1]) * 0.1
-                if self.atoms[i, 1] > height - wall_repel:
-                    forces[i, 1] += (height - wall_repel - self.atoms[i, 1]) * 0.1
+            if self.settings.wall_repel > 0:
+                if self.atoms[i, 0] < self.settings.wall_repel:
+                    forces[i, 0] += (self.settings.wall_repel - self.atoms[i, 0]) * 0.1
+                if self.atoms[i, 0] > self.settings.width - self.settings.wall_repel:
+                    forces[i, 0] += (self.settings.width - self.settings.wall_repel - self.atoms[i, 0]) * 0.1
+                if self.atoms[i, 1] < self.settings.wall_repel:
+                    forces[i, 1] += (self.settings.wall_repel - self.atoms[i, 1]) * 0.1
+                if self.atoms[i, 1] > self.settings.height - self.settings.wall_repel:
+                    forces[i, 1] += (self.settings.height - self.settings.wall_repel - self.atoms[i, 1]) * 0.1
 
             # Apply gravity
-            forces[i, 1] += gravity
+            forces[i, 1] += self.settings.gravity
 
+        return forces
+
+    def _update_forces(self, forces: np.array) -> float:
+        """
+        Apply the interaction rules between atoms using CPU.
+
+        Args:
+            pulse (int): Current pulse strength
+            pulse_x (float): X coordinate of the pulse center
+            pulse_y (float): Y coordinate of the pulse center
+
+        Returns:
+            float: Total velocity (measure of activity)
+        """
         # Update velocities with forces and apply viscosity
-        vmix = 1.0 - viscosity
-        self.atoms[:, 2] = self.atoms[:, 2] * vmix + forces[:, 0] * time_scale
-        self.atoms[:, 3] = self.atoms[:, 3] * vmix + forces[:, 1] * time_scale
+        vmix = 1.0 - self.settings.viscosity
+        self.atoms[:, 2] = self.atoms[:, 2] * vmix + forces[:, 0] * self.settings.time_scale
+        self.atoms[:, 3] = self.atoms[:, 3] * vmix + forces[:, 1] * self.settings.time_scale
 
         # Calculate total velocity for time scaling
         total_v = np.sum(np.abs(self.atoms[:, 2:4]))
-        total_v /= total_atoms
+        total_v /= len(self.atoms)
 
         # Update positions
         self.atoms[:, 0:2] += self.atoms[:, 2:4]
@@ -189,9 +187,9 @@ class Atoms:
             self.atoms[x_too_low, 0] = -self.atoms[x_too_low, 0]
             self.atoms[x_too_low, 2] *= -1
 
-        x_too_high = self.atoms[:, 0] >= width
+        x_too_high = self.atoms[:, 0] >= self.settings.width
         if np.any(x_too_high):
-            self.atoms[x_too_high, 0] = 2 * width - self.atoms[x_too_high, 0]
+            self.atoms[x_too_high, 0] = 2 * self.settings.width - self.atoms[x_too_high, 0]
             self.atoms[x_too_high, 2] *= -1
 
         # Y boundaries
@@ -200,9 +198,9 @@ class Atoms:
             self.atoms[y_too_low, 1] = -self.atoms[y_too_low, 1]
             self.atoms[y_too_low, 3] *= -1
 
-        y_too_high = self.atoms[:, 1] >= height
+        y_too_high = self.atoms[:, 1] >= self.settings.height
         if np.any(y_too_high):
-            self.atoms[y_too_high, 1] = 2 * height - self.atoms[y_too_high, 1]
+            self.atoms[y_too_high, 1] = 2 * self.settings.height - self.atoms[y_too_high, 1]
             self.atoms[y_too_high, 3] *= -1
 
         return total_v

@@ -5,6 +5,7 @@ import time
 
 import numpy as np
 import pygame
+import taichi as ti
 
 from .atoms import Atoms
 
@@ -21,12 +22,8 @@ class Simulation:
 
     def __init__(
         self,
-        seed: int = 1165180294,
-        width: int = 800,
-        height: int = 600,
-        fullscreen: bool = False,
-        num_colors: int = 4,
-        atoms_per_color: int = 500,
+        settings: Settings,
+        screen: pygame.Surface,
     ) -> None:
         """
         Initialize the simulation.
@@ -39,26 +36,11 @@ class Simulation:
             num_colors (int): Number of different colored particles
             atoms_per_color (int): Number of atoms of each color
         """
-        pygame.init()
-        self.settings = Settings(
-            seed=seed,
-            width=width,
-            height=height,
-            num_colors=num_colors,
-            atoms_per_color=atoms_per_color,
-        )
-
-        # Setup display
-        flags = pygame.SCALED | pygame.RESIZABLE
-        if fullscreen:
-            flags |= pygame.FULLSCREEN
-        self.screen = pygame.display.set_mode(
-            (self.settings.width, self.settings.height),
-            flags
-        )
-        pygame.display.set_caption(f"Particle Life #{self.settings.seed}")
+        self.settings = settings
+        self.screen = screen
 
         # Create main components
+        ti.init(arch=ti.opengl)
         self.atoms = Atoms(self.settings)
         # self.clusters = Clusters(self.settings)
         self.ui = UI(self.settings, self._on_settings_changed)
@@ -168,8 +150,8 @@ class Simulation:
         #     self.clusters.track_clusters(self.atoms.atoms)
 
         # Record frame if recording
-        if self.recording:
-            self._record_frame()
+        # if self.recording:
+        #     self._record_frame()
 
     def _draw(self) -> None:
         """Draw all elements to the screen."""

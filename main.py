@@ -9,6 +9,9 @@ import argparse
 import logging
 import sys
 
+import pygame
+
+from particlelife.settings import Settings
 from particlelife.simulation import Simulation
 
 
@@ -58,22 +61,36 @@ def setup_logging(debug: bool = False) -> None:
     )
 
 
-def main() -> None:
+def main(args: argparse.Namespace) -> None:
     """Main entry point for the application."""
-    args = parse_args()
-    setup_logging(args.debug)
-
-    sim = Simulation(
+    settings = Settings(
         seed=args.seed,
         width=args.width,
         height=args.height,
-        fullscreen=args.fullscreen,
         num_colors=args.colors,
-        atoms_per_color=args.atoms_per_color,
+        atoms_per_color=args.atoms_per_color
+        )
+
+    # Setup display
+    pygame.init()
+    flags = pygame.SCALED | pygame.RESIZABLE
+    if args.fullscreen:
+        flags |= pygame.FULLSCREEN
+    screen = pygame.display.set_mode(
+        (args.width, args.height),
+        flags
+    )
+    pygame.display.set_caption(f"Particle Life #{settings.seed}")
+
+    sim = Simulation(
+        settings=settings,
+        screen=screen
     )
 
     sys.exit(sim.run())
 
 
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    setup_logging(args.debug)
+    main(args)
