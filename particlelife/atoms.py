@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import pygame
+import taichi as ti
 
 if TYPE_CHECKING:
     from particlelife.settings import Settings
@@ -96,6 +97,7 @@ class Atoms:
 
         return total_velocity
 
+    @ti.kernel
     def _calc_forces(self, colors: np.array, positions: np.array, forces: np.array, pulse: int, pulse_x: float, pulse_y: float) -> np.array:
         """Calculate pairwise distances and forces"""
         for i in range(len(self.atoms)):
@@ -156,6 +158,7 @@ class Atoms:
 
         return forces
 
+    @ti.kernel
     def _update_forces(self, forces: np.array) -> float:
         """
         Apply the interaction rules between atoms using CPU.
