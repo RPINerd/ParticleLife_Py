@@ -23,18 +23,23 @@ logger = logging.getLogger(__name__)
 
 # Constants
 NUM_PARTICLE_TYPES = 4
-DEFAULT_PARTICLE_COUNT = 500
-DEFAULT_WINDOW_SIZE = (1024, 1024)  # Updated window size to 1024x1024
+DEFAULT_PARTICLE_COUNT = 800
+DEFAULT_WINDOW_SIZE = (1920, 1080)  # Updated window size to 1024x1024
 DEFAULT_RADIUS = 50.0
 DEFAULT_INTERACTION_STRENGTH = 0.5
 DEFAULT_REPULSION_STRENGTH = -0.1
 DEFAULT_FRICTION = 0.1
+DEFAULT_BORDER_WIDTH = 0.01  # Border width as a fraction of window size
+DEFAULT_BORDER_REPULSION = 1.0  # Border repulsion force strength
 
 # Colors in hexadecimal format as expected by Taichi GUI
-COLORS = [0xFF0000,  # Red
-          0x00FF00,  # Green
-          0x0000FF,  # Blue
-          0xFFFF00]  # Yellow
+COLORS = [
+    0xEE1010,  # Red
+    0x10EE10,  # Green
+    0x1010EE,  # Blue
+    0xEEEE10  # Yellow
+    ]
+BACKGROUND_COLOR = 0x131313
 
 
 @ti.data_oriented
@@ -52,7 +57,9 @@ class ParticleLifeSimulation:
         window_size: tuple[int, int] = DEFAULT_WINDOW_SIZE,
         interaction_radius: float = DEFAULT_RADIUS,
         friction: float = DEFAULT_FRICTION,
-        rule_seed: int | None = None):
+        border_width: float = DEFAULT_BORDER_WIDTH,
+        border_repulsion: float = DEFAULT_BORDER_REPULSION,
+        rule_seed: int | None = None) -> None:
         """
         Initialize the particle life simulation.
 
@@ -61,6 +68,8 @@ class ParticleLifeSimulation:
             window_size: Size of the simulation window (width, height).
             interaction_radius: Radius within which particles interact.
             friction: Friction coefficient to dampen particle velocities.
+            border_width: Width of border repulsion zone as a fraction of window size.
+            border_repulsion: Border repulsion force strength.
             rule_seed: Seed for random rule generation.
         """
         # Store configuration
@@ -70,6 +79,12 @@ class ParticleLifeSimulation:
         self.interaction_radius = interaction_radius
         self.interaction_radius_squared = interaction_radius * interaction_radius
         self.friction = friction
+        self.border_width = border_width
+        self.border_repulsion = border_repulsion
+
+        # Calculate border distances in normalized coordinates [0-1]
+        self.border_x = self.border_width
+        self.border_y = self.border_width
 
         # Set random seed if provided
         if rule_seed is not None:
@@ -93,7 +108,7 @@ class ParticleLifeSimulation:
 
         # Create window
         window_title = f"Particle Life - {self.total_particles} particles"
-        self.gui = ti.GUI(window_title, res=window_size, background_color=0x112F41)
+        self.gui = ti.GUI(window_title, res=window_size, background_color=BACKGROUND_COLOR)
 
     def _initialize_particles(self) -> None:
         """
@@ -162,6 +177,9 @@ class ParticleLifeSimulation:
             # Reset acceleration
             acceleration = ti.Vector([0.0, 0.0])
 
+            # Calculate border repulsion
+            self._apply_border_repulsion(p_pos_i, acceleration)
+
             # Interact with all other particles
             for j in range(self.total_particles):
                 if i != j:  # Don't interact with self
@@ -208,6 +226,39 @@ class ParticleLifeSimulation:
                 elif self.pos[i][d] >= 1.0:
                     self.pos[i][d] = self.pos[i][d] - ti.floor(self.pos[i][d])
 
+    @ti.func
+    def _apply_border_repulsion(self, pos: ti.template(), acceleration: ti.template()):
+        """
+        Apply repulsion forces from borders to keep particles away from edges.
+
+        Args:
+            pos: Current position of the particle in [0,1] range
+            acceleration: Acceleration vector to update
+        """
+        # Left border repulsion
+        if pos[0] < self.border_x:
+            # Force increases as the particle gets closer to the edge
+            force = self.border_repulsion * (1.0 - pos[0] / self.border_x)
+            acceleration[0] += force
+
+        # Right border repulsion
+        if pos[0] > (1.0 - self.border_x):
+            # Force increases as the particle gets closer to the edge
+            force = self.border_repulsion * (1.0 - (1.0 - pos[0]) / self.border_x)
+            acceleration[0] -= force
+
+        # Top border repulsion
+        if pos[1] < self.border_y:
+            # Force increases as the particle gets closer to the edge
+            force = self.border_repulsion * (1.0 - pos[1] / self.border_y)
+            acceleration[1] += force
+
+        # Bottom border repulsion
+        if pos[1] > (1.0 - self.border_y):
+            # Force increases as the particle gets closer to the edge
+            force = self.border_repulsion * (1.0 - (1.0 - pos[1]) / self.border_y)
+            acceleration[1] -= force
+
     def update(self, dt: float = 0.01) -> bool:
         """
         Update the simulation state and render a frame.
@@ -226,7 +277,7 @@ class ParticleLifeSimulation:
         particle_types = self.particle_type.to_numpy()
 
         # Clear the window
-        self.gui.clear(color=0x112F41)
+        self.gui.clear(color=BACKGROUND_COLOR)
 
         # Draw particles by type
         for type_idx in range(NUM_PARTICLE_TYPES):
@@ -318,6 +369,10 @@ def parse_arguments() -> argparse.Namespace:
                         help="Path to save interaction rules to")
     parser.add_argument("--cpu", action="store_true",
                         help="Force CPU mode instead of GPU")
+    parser.add_argument("--border-width", type=float, default=DEFAULT_BORDER_WIDTH,
+                        help=f"Border width as fraction of window size (default: {DEFAULT_BORDER_WIDTH})")
+    parser.add_argument("--border-repulsion", type=float, default=DEFAULT_BORDER_REPULSION,
+                        help=f"Border repulsion force strength (default: {DEFAULT_BORDER_REPULSION})")
 
     return parser.parse_args()
 
@@ -347,6 +402,8 @@ def main():
         window_size=(args.width, args.height),
         interaction_radius=args.radius,
         friction=args.friction,
+        border_width=args.border_width,
+        border_repulsion=args.border_repulsion,
         rule_seed=args.seed
     )
 
