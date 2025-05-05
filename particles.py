@@ -23,14 +23,14 @@ logger = logging.getLogger(__name__)
 
 # Constants
 NUM_PARTICLE_TYPES = 4
-DEFAULT_PARTICLE_COUNT = 800
+DEFAULT_PARTICLE_COUNT = 1000
 DEFAULT_WINDOW_SIZE = (1920, 1080)  # Updated window size to 1024x1024
-DEFAULT_RADIUS = 50.0
+DEFAULT_RADIUS = 35.0
 DEFAULT_INTERACTION_STRENGTH = 0.5
 DEFAULT_REPULSION_STRENGTH = -0.1
 DEFAULT_FRICTION = 0.1
-DEFAULT_BORDER_WIDTH = 0.01  # Border width as a fraction of window size
-DEFAULT_BORDER_REPULSION = 1.0  # Border repulsion force strength
+DEFAULT_BORDER_WIDTH = 0.03  # Border width as a fraction of window size
+DEFAULT_BORDER_REPULSION = 1.5  # Border repulsion force strength
 
 # Colors in hexadecimal format as expected by Taichi GUI
 COLORS = [
@@ -219,12 +219,14 @@ class ParticleLifeSimulation:
             # Update position
             self.pos[i] += self.vel[i] * dt
 
-            # Boundary conditions (wrap around)
+            # Boundary conditions (prevent particles from leaving the window)
             for d in ti.static(range(2)):
                 if self.pos[i][d] < 0.0:
-                    self.pos[i][d] = 1.0 + self.pos[i][d] - ti.floor(self.pos[i][d])
+                    self.pos[i][d] = 0.0
+                    self.vel[i][d] *= -1.0  # Set velocity to zero at boundary
                 elif self.pos[i][d] >= 1.0:
-                    self.pos[i][d] = self.pos[i][d] - ti.floor(self.pos[i][d])
+                    self.pos[i][d] = 0.999  # Slightly less than 1 to keep in bounds
+                    self.vel[i][d] *= -1.0  # Set velocity to zero at boundary
 
     @ti.func
     def _apply_border_repulsion(self, pos: ti.template(), acceleration: ti.template()):
